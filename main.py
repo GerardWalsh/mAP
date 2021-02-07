@@ -8,8 +8,12 @@ import argparse
 import math
 
 import numpy as np
+import cv2
+from tqdm import tqdm
 
-MINOVERLAP = 0.5 # default value (defined in the PASCAL VOC2012 challenge)
+from utils import iou, rbox_iou
+
+ # default value (defined in the PASCAL VOC2012 challenge)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-na', '--no-animation', help="no animation is shown.", action="store_true")
@@ -19,6 +23,9 @@ parser.add_argument('-q', '--quiet', help="minimalistic console output.", action
 parser.add_argument('-i', '--ignore', nargs='+', type=str, help="ignore a list of classes.")
 # argparse receiving list of classes with specific IoU (e.g., python main.py --set-class-iou person 0.7)
 parser.add_argument('--set-class-iou', nargs='+', type=str, help="set IoU for a specific class.")
+parser.add_argument('--rotated', type=str, help="If bounding boxes are rotated.")
+parser.add_argument('--verbose', type=str, help="Print the associated gt with detection.")
+parser.add_argument('--overlap', default=0.5, type=float, help="Print the associated gt with detection.")
 args = parser.parse_args()
 
 '''
@@ -32,6 +39,8 @@ args = parser.parse_args()
   (height)            *
                 (Right,Bottom)
 '''
+# set overlap
+MINOVERLAP = args.overlap
 
 # if there are no classes to ignore then replace None by empty list
 if args.ignore is None:
@@ -44,8 +53,8 @@ if args.set_class_iou is not None:
 # make sure that the cwd() is the location of the python script (so that every path makes sense)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-GT_PATH = os.path.join(os.getcwd(), 'input', 'ground-truth')
-DR_PATH = os.path.join(os.getcwd(), 'input', 'detection-results')
+GT_PATH = os.path.join(os.getcwd(), 'input', 'gt')
+DR_PATH = os.path.join(os.getcwd(), 'input', 'detections')
 # if there are no images then no animation can be shown
 IMG_PATH = os.path.join(os.getcwd(), 'input', 'images-optional')
 if os.path.exists(IMG_PATH): 
@@ -352,6 +361,11 @@ if show_animation:
      Load each of the ground-truth files into a temporary ".json" file.
      Create a list of all the class names present in the ground-truth (gt_classes).
 """
+
+if args.rotated:
+    print('Rotated!')
+    exit
+
 # get a list with the ground-truth files
 ground_truth_files_list = glob.glob(GT_PATH + '/*.txt')
 if len(ground_truth_files_list) == 0:
@@ -382,7 +396,11 @@ for txt_file in ground_truth_files_list:
             if "difficult" in line:
                     class_name, left, top, right, bottom, _difficult = line.split()
                     is_difficult = True
+            elif args.rotated:
+                class_name, left, top, right, bottom, angle = line.split()
+                # print('dat ag', angle)
             else:
+                    # print('in here')
                     class_name, left, top, right, bottom = line.split()
         except ValueError:
             error_msg = "Error: File " + txt_file + " in the wrong format.\n"
@@ -394,7 +412,10 @@ for txt_file in ground_truth_files_list:
         # check if class is in the ignore list, if yes skip
         if class_name in args.ignore:
             continue
-        bbox = left + " " + top + " " + right + " " +bottom
+        if args.rotated:
+            bbox = left + " " + top + " " + right + " " + bottom + " " + angle
+        else:
+            bbox = left + " " + top + " " + right + " " + bottom
         if is_difficult:
             bounding_boxes.append({"class_name":class_name, "bbox":bbox, "used":False, "difficult":True})
             is_difficult = False
@@ -426,6 +447,7 @@ gt_classes = list(gt_counter_per_class.keys())
 # let's sort the classes alphabetically
 gt_classes = sorted(gt_classes)
 n_classes = len(gt_classes)
+print('We have %d classes' % n_classes)
 #print(gt_classes)
 #print(gt_counter_per_class)
 
@@ -477,7 +499,10 @@ for class_index, class_name in enumerate(gt_classes):
         lines = file_lines_to_list(txt_file)
         for line in lines:
             try:
-                tmp_class_name, confidence, left, top, right, bottom = line.split()
+                if args.rotated:
+                    tmp_class_name, confidence, left, top, right, bottom, angle = line.split()
+                else:
+                    tmp_class_name, confidence, left, top, right, bottom = line.split()
             except ValueError:
                 error_msg = "Error: File " + txt_file + " in the wrong format.\n"
                 error_msg += " Expected: <class_name> <confidence> <left> <top> <right> <bottom>\n"
@@ -485,9 +510,12 @@ for class_index, class_name in enumerate(gt_classes):
                 error(error_msg)
             if tmp_class_name == class_name:
                 #print("match")
-                bbox = left + " " + top + " " + right + " " +bottom
+                if args.rotated:
+                    bbox = left + " " + top + " " + right + " " + bottom + " " + angle
+                else:
+                    bbox = left + " " + top + " " + right + " " + bottom
                 bounding_boxes.append({"confidence":confidence, "file_id":file_id, "bbox":bbox})
-                #print(bounding_boxes)
+                # print(bounding_boxes)
     # sort detection-results by decreasing confidence
     bounding_boxes.sort(key=lambda x:float(x['confidence']), reverse=True)
     with open(TEMP_FILES_PATH + "/" + class_name + "_dr.json", 'w') as outfile:
@@ -517,8 +545,10 @@ with open(output_files_path + "/output.txt", 'w') as output_file:
         nd = len(dr_data)
         tp = [0] * nd # creates an array of zeros of size nd
         fp = [0] * nd
-        for idx, detection in enumerate(dr_data):
+        
+        for idx, detection in enumerate(tqdm(dr_data)):
             file_id = detection["file_id"]
+            # print('file id', file_id)
             if show_animation:
                 # find ground truth image
                 ground_truth_img = glob.glob1(IMG_PATH, file_id + ".*")
@@ -545,25 +575,39 @@ with open(output_files_path + "/output.txt", 'w') as output_file:
             # open ground-truth with that file_id
             gt_file = TEMP_FILES_PATH + "/" + file_id + "_ground_truth.json"
             ground_truth_data = json.load(open(gt_file))
+            # print(ground_truth_data)
             ovmax = -1
             gt_match = -1
             # load detected object bounding-box
             bb = [ float(x) for x in detection["bbox"].split() ]
+            # print('the bb')
+            gtbest = []
             for obj in ground_truth_data:
                 # look for a class_name match
                 if obj["class_name"] == class_name:
                     bbgt = [ float(x) for x in obj["bbox"].split() ]
-                    bi = [max(bb[0],bbgt[0]), max(bb[1],bbgt[1]), min(bb[2],bbgt[2]), min(bb[3],bbgt[3])]
-                    iw = bi[2] - bi[0] + 1
-                    ih = bi[3] - bi[1] + 1
-                    if iw > 0 and ih > 0:
-                        # compute overlap (IoU) = area of intersection / area of union
-                        ua = (bb[2] - bb[0] + 1) * (bb[3] - bb[1] + 1) + (bbgt[2] - bbgt[0]
-                                        + 1) * (bbgt[3] - bbgt[1] + 1) - iw * ih
-                        ov = iw * ih / ua
+                    if args.rotated:
+                        ov = rbox_iou(bb, bbgt)
                         if ov > ovmax:
                             ovmax = ov
                             gt_match = obj
+                            gtbest = bbgt
+                    else:
+                        bbgt = [ float(x) for x in obj["bbox"].split() ]
+                        bi = [max(bb[0], bbgt[0]), max(bb[1], bbgt[1]), min(bb[2], bbgt[2]), min(bb[3], bbgt[3])]
+                        iw = bi[2] - bi[0] + 1
+                        ih = bi[3] - bi[1] + 1
+                        if iw > 0 and ih > 0:
+                            # compute overlap (IoU) = area of intersection / area of union
+                            ua = (bb[2] - bb[0] + 1) * (bb[3] - bb[1] + 1) + (bbgt[2] - bbgt[0]
+                                            + 1) * (bbgt[3] - bbgt[1] + 1) - iw * ih
+                            ov = iou(bb, bbgt)
+                            if ov > ovmax:
+                                ovmax = ov
+                                gt_match = obj
+
+            if args.verbose:
+                print('Final overlap for: ', bb, 'and gt box: ', gtbest, 'is: ', ovmax)
 
             # assign detection as true positive/don't care/false positive
             if show_animation:
