@@ -16,6 +16,7 @@ from utils import iou, rbox_iou
  # default value (defined in the PASCAL VOC2012 challenge)
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--input-path', type=str, default=".", help="Path to gt and prediction data to test.")
 parser.add_argument('-na', '--no-animation', help="no animation is shown.", action="store_true")
 parser.add_argument('-np', '--no-plot', help="no plot is shown.", action="store_true")
 parser.add_argument('-q', '--quiet', help="minimalistic console output.", action="store_true")
@@ -24,7 +25,7 @@ parser.add_argument('-i', '--ignore', nargs='+', type=str, help="ignore a list o
 # argparse receiving list of classes with specific IoU (e.g., python main.py --set-class-iou person 0.7)
 parser.add_argument('--set-class-iou', nargs='+', type=str, help="set IoU for a specific class.")
 parser.add_argument('--rotated', type=str, help="If bounding boxes are rotated.")
-parser.add_argument('--verbose', type=str, help="Print the associated gt with detection.")
+parser.add_argument('--verbose', type=bool, default=False, help="Print the associated gt with detection.")
 parser.add_argument('--overlap', default=0.5, type=float, help="Print the associated gt with detection.")
 args = parser.parse_args()
 
@@ -53,8 +54,9 @@ if args.set_class_iou is not None:
 # make sure that the cwd() is the location of the python script (so that every path makes sense)
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-GT_PATH = os.path.join(os.getcwd(), 'input', 'gt')
-DR_PATH = os.path.join(os.getcwd(), 'input', 'detections')
+GT_PATH = os.path.join(args.input_path, 'gt')
+DR_PATH = os.path.join(args.input_path, 'detections')
+
 # if there are no images then no animation can be shown
 IMG_PATH = os.path.join(os.getcwd(), 'input', 'images-optional')
 if os.path.exists(IMG_PATH): 
@@ -362,9 +364,9 @@ if show_animation:
      Create a list of all the class names present in the ground-truth (gt_classes).
 """
 
-if args.rotated:
-    print('Rotated!')
-    exit
+# if args.rotated:
+#     print('Rotated!')
+#     exit
 
 # get a list with the ground-truth files
 ground_truth_files_list = glob.glob(GT_PATH + '/*.txt')
@@ -447,7 +449,6 @@ gt_classes = list(gt_counter_per_class.keys())
 # let's sort the classes alphabetically
 gt_classes = sorted(gt_classes)
 n_classes = len(gt_classes)
-print('We have %d classes' % n_classes)
 #print(gt_classes)
 #print(gt_counter_per_class)
 
@@ -546,7 +547,7 @@ with open(output_files_path + "/output.txt", 'w') as output_file:
         tp = [0] * nd # creates an array of zeros of size nd
         fp = [0] * nd
         
-        for idx, detection in enumerate(tqdm(dr_data)):
+        for idx, detection in enumerate(dr_data):
             file_id = detection["file_id"]
             # print('file id', file_id)
             if show_animation:
@@ -706,7 +707,6 @@ with open(output_files_path + "/output.txt", 'w') as output_file:
         for idx, val in enumerate(tp):
             tp[idx] += cumsum
             cumsum += val
-        #print(tp)
         rec = tp[:]
         for idx, val in enumerate(tp):
             rec[idx] = float(tp[idx]) / gt_counter_per_class[class_name]
